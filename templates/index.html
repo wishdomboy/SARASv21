@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SARAS — AI Robot System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet"/>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<!-- face-api.js — in-browser face detection (no server needed) -->
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<link rel="stylesheet" href="/static/style.css"/>
+<style>
+/* ── Arduino Serial Panel ────────────────────────────────── */
+.arduino-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:8px 12px;background:rgba(0,255,136,0.04);border:1px solid rgba(0,255,136,0.15);
+  border-radius:8px;margin-bottom:12px;}
+.arduino-badge{font-family:'JetBrains Mono',monospace;font-size:11px;
+  padding:3px 8px;border-radius:4px;background:rgba(255,255,255,0.06);
+  color:#888;letter-spacing:.05em;transition:all .3s;}
+.arduino-badge.connected{color:#00ff88;background:rgba(0,255,136,0.12);}
+.arduino-badge.danger{color:#ff4444;background:rgba(255,68,68,0.12);}
+.mock-log{font-family:'JetBrains Mono',monospace;font-size:10px;
+  color:rgba(255,255,255,0.3);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dist-display{font-family:'JetBrains Mono',monospace;font-size:11px;color:#a0f0c0;}
+/* ── Camera overlay canvas ──────────────────────────────── */
+.cam-canvas-overlay{position:absolute;top:0;left:0;pointer-events:none;
+  display:none;border-radius:inherit;}
+/* ── Camera controls row ────────────────────────────────── */
+.camera-btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+/* ── Browser-mode notice ────────────────────────────────── */
+.browser-mode-note{font-size:10px;color:rgba(255,255,255,0.3);
+  font-family:'JetBrains Mono',monospace;margin-top:4px;letter-spacing:.05em;}
+</style>
+</head>
+<body>
+
+<!-- ambient background -->
+<div class="amb" aria-hidden="true">
+  <div class="amb-orb ao1"></div>
+  <div class="amb-orb ao2"></div>
+  <div class="amb-orb ao3"></div>
+  <div class="amb-grid"></div>
+</div>
+<div class="scanlines" aria-hidden="true"></div>
+
+<!-- ═══════════════════════════ TOPBAR ═══════════════════════════ -->
+<nav class="topbar">
+  <div class="tb-brand">
+    <span class="tb-lotus">🪷</span>
+    <span class="tb-name">SARAS</span>
+    <span class="tb-tag">AI ROBOT</span>
+  </div>
+  <div class="tb-pills">
+    <span class="tb-pill" id="connectionStatus"><span class="tb-dot"></span>OFFLINE</span>
+    <span class="tb-pill"><span class="tb-label">BAT</span><span id="batteryLevel">--</span>%</span>
+    <span class="tb-pill"><span class="tb-label">UP</span><span id="uptimeDisplay">00:00:00</span></span>
+  </div>
+  <button class="tb-ctrl-btn" onclick="document.getElementById('ctrl').scrollIntoView({behavior:'smooth'})">
+    Control Panel ↓
+  </button>
+</nav>
+
+
+<!-- ═══════════════════════════ HERO ═══════════════════════════ -->
+<section class="hero" id="hero">
+
+  <!-- LEFT — Chat -->
+  <div class="hero-left">
+
+    <div class="hl-brand">
+      <span class="hl-eyebrow">SARASWATI AI ROBOT AUTONOMOUS SYSTEM</span>
+    </div>
+
+    <h1 class="hl-title">
+      Your robot,<br>
+      <em>controlled by AI.</em>
+    </h1>
+
+    <p class="hl-sub">
+      Talk to SARAS naturally. Give commands, ask questions, track faces —
+      all through one intelligent interface. Supports 50+ languages.
+    </p>
+
+    <!-- Chat window -->
+    <div class="chat-win" id="chatWin">
+      <div class="cw-messages" id="cwMessages">
+        <!-- Welcome message injected by JS -->
+      </div>
+      <div class="cw-composer">
+        <div class="cw-inner">
+          <input type="text" id="cwInput" class="cw-input"
+            placeholder="Ask anything or give a command…" autocomplete="off"/>
+          <button class="cw-mic" id="cwMic" title="Voice input">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </button>
+          <button class="cw-send" id="cwSend">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <line x1="22" y1="2" x2="11" y2="13"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+        <div class="cw-chips">
+          <button class="cw-chip" data-cmd="go forward">↑ Forward</button>
+          <button class="cw-chip" data-cmd="turn left">← Left</button>
+          <button class="cw-chip" data-cmd="turn right">→ Right</button>
+          <button class="cw-chip" data-cmd="stop">■ Stop</button>
+          <button class="cw-chip" data-cmd="follow me">◉ Follow</button>
+          <button class="cw-chip" data-cmd="start tracking">🎯 Track</button>
+        </div>
+      </div>
+    </div>
+
+    <button class="hl-scroll-btn"
+      onclick="document.getElementById('ctrl').scrollIntoView({behavior:'smooth'})">
+      Open full control panel
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+
+  </div><!-- /.hero-left -->
+
+
+  <!-- RIGHT — Animated feature showcase -->
+  <div class="hero-right" aria-hidden="true">
+    <div class="hr-wrap">
+
+      <!-- Orbit ring decoration -->
+      <div class="hr-orbit">
+        <div class="hr-orbit-dot od1"></div>
+        <div class="hr-orbit-dot od2"></div>
+        <div class="hr-orbit-dot od3"></div>
+      </div>
+
+      <!-- Feature cards — staggered animate-in -->
+      <div class="hr-row r1">
+        <div class="fc fc-wide">
+          <div class="fc-ico">🪷</div>
+          <div class="fc-body">
+            <strong>Sarvam AI Brain</strong>
+            <span>50+ languages · Context memory · Instant answers</span>
+          </div>
+          <div class="fc-anim fc-dots">
+            <span class="td"></span><span class="td"></span><span class="td"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hr-row r2">
+        <div class="fc">
+          <div class="fc-ico">🎙</div>
+          <div class="fc-body">
+            <strong>Voice Control</strong>
+            <span>Speak any language</span>
+          </div>
+          <div class="fc-anim fc-wave">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+        <div class="fc">
+          <div class="fc-ico">👁</div>
+          <div class="fc-body">
+            <strong>Face Tracking</strong>
+            <span>Browser face-api.js</span>
+          </div>
+          <div class="fc-anim fc-radar">
+            <div class="fc-radar-ring"></div>
+            <div class="fc-radar-sweep"></div>
+            <div class="fc-radar-dot"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hr-row r3">
+        <div class="fc">
+          <div class="fc-ico">⚡</div>
+          <div class="fc-body">
+            <strong>Obstacle Aware</strong>
+            <span>Auto-stop · Bypass</span>
+          </div>
+          <div class="fc-anim fc-sbars">
+            <div class="sb"></div><div class="sb"></div><div class="sb"></div>
+            <div class="sb"></div><div class="sb"></div>
+          </div>
+        </div>
+        <div class="fc">
+          <div class="fc-ico">🎮</div>
+          <div class="fc-body">
+            <strong>Multi-Control</strong>
+            <span>Keys · Pad · Touch</span>
+          </div>
+          <div class="fc-anim fc-pulse"></div>
+        </div>
+      </div>
+
+      <div class="hr-row r4">
+        <div class="fc">
+          <div class="fc-ico">📷</div>
+          <div class="fc-body">
+            <strong>Live Camera</strong>
+            <span>Browser · Device cam</span>
+          </div>
+          <div class="fc-anim fc-blink"></div>
+        </div>
+        <div class="fc">
+          <div class="fc-ico">🔌</div>
+          <div class="fc-body">
+            <strong>Web Serial</strong>
+            <span>Arduino · USB direct</span>
+          </div>
+          <div class="fc-anim fc-orb"></div>
+        </div>
+      </div>
+
+      <!-- Live status floaters -->
+      <div class="hr-floater hf1">
+        <span class="hf-dot" id="hfDot"></span>
+        <span id="hfStatus">OFFLINE</span>
+      </div>
+      <div class="hr-floater hf2">
+        🤖 <span id="hfDir">STANDBY</span>
+      </div>
+
+    </div>
+  </div><!-- /.hero-right -->
+
+</section><!-- /.hero -->
+
+
+<!-- ═══════════════════ STATUS STRIP ═══════════════════ -->
+<div class="status-strip">
+  <div class="ss-item"><span class="ss-l">STATUS</span><span class="ss-v" id="robotStatus">IDLE</span></div>
+  <div class="ss-item"><span class="ss-l">DIRECTION</span><span class="ss-v" id="robotDirection">STOPPED</span></div>
+  <div class="ss-item"><span class="ss-l">LAST CMD</span><span class="ss-v" id="lastCommand">—</span></div>
+  <div class="ss-item" id="obstacleCard"><span class="ss-l">OBSTACLE</span><span class="ss-v" id="obstacleStatus">CLEAR</span></div>
+  <div class="ss-item"><span class="ss-l">FACE TRACK</span><span class="ss-v" id="faceStatus">OFF</span></div>
+  <div class="ss-item"><span class="ss-l">ARDUINO</span><span class="ss-v" id="arduinoMode">DEMO</span></div>
+</div>
+
+
+<!-- ═══════════════════ CONTROL PANEL ═══════════════════ -->
+<div id="ctrl">
+
+  <div class="ctrl-header">
+    <div class="ctrl-title">🪷 SARAS Control Panel</div>
+    <button class="ctrl-back-btn"
+      onclick="document.getElementById('hero').scrollIntoView({behavior:'smooth'})">
+      ↑ Back to SARAS
+    </button>
+  </div>
+
+  <main class="main-grid" id="controls">
+
+    <!-- ROW 1: Voice(1) | Manual(2) | Chat(3) -->
+
+    <!-- VOICE CONTROL -->
+    <section class="panel voice-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">◎</span> VOICE CONTROL</h2>
+        <span class="panel-badge">AI SPEECH</span>
+      </div>
+      <div class="panel-body">
+        <div class="waveform-container" id="waveformContainer">
+          <div class="waveform-bars" id="waveformBars"></div>
+          <p class="waveform-label" id="waveformLabel">READY</p>
+        </div>
+        <div class="recognized-text-box" id="recognizedTextBox">
+          <span class="rtb-label">RECOGNIZED ▸</span>
+          <span id="recognizedText">...</span>
+        </div>
+        <button class="mic-btn" id="btnMic" title="Tap to speak">
+          <div class="mic-btn-icon">🎤</div>
+          <div class="mic-pulse-ring rg1"></div>
+          <div class="mic-pulse-ring rg2"></div>
+        </button>
+        <p class="mic-instruction">TAP &amp; SPEAK A COMMAND</p>
+        <div class="quick-voice-grid">
+          <button class="qv-btn" data-text="go forward">↑ FORWARD</button>
+          <button class="qv-btn" data-text="turn left">← LEFT</button>
+          <button class="qv-btn" data-text="turn right">→ RIGHT</button>
+          <button class="qv-btn" data-text="go backward">↓ BACKWARD</button>
+          <button class="qv-btn stop" data-text="stop">■ STOP</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- MANUAL CONTROL -->
+    <section class="panel manual-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">⌨</span> MANUAL CONTROL</h2>
+        <span class="panel-badge">KEYBOARD / TOUCH</span>
+      </div>
+      <div class="panel-body">
+        <div class="dpad-container">
+          <div class="dpad">
+            <button class="dpad-btn dpad-up"    data-cmd="F" id="dpadF"><span>▲</span><small>W / ↑</small></button>
+            <div class="dpad-middle-row">
+              <button class="dpad-btn dpad-left"  data-cmd="L" id="dpadL"><span>◀</span><small>A / ←</small></button>
+              <button class="dpad-btn dpad-stop"  data-cmd="S" id="dpadS"><span>■</span><small>SPACE</small></button>
+              <button class="dpad-btn dpad-right" data-cmd="R" id="dpadR"><span>▶</span><small>D / →</small></button>
+            </div>
+            <button class="dpad-btn dpad-down"   data-cmd="B" id="dpadB"><span>▼</span><small>S / ↓</small></button>
+          </div>
+        </div>
+        <div class="movement-indicator" id="movementIndicator">
+          <div class="move-arrow" id="moveArrow">—</div>
+          <div class="move-label" id="moveLabel">STANDBY</div>
+        </div>
+        <div class="key-hints">
+          <kbd>W</kbd> Fwd &nbsp;<kbd>S</kbd> Bck &nbsp;<kbd>A</kbd> Left &nbsp;<kbd>D</kbd> Right &nbsp;<kbd>SPACE</kbd> Stop
+        </div>
+      </div>
+    </section>
+
+    <!-- SARAS CHAT — col 3 row 1 -->
+    <section class="panel chat-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">🪷</span> SARAS CHAT</h2>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span class="panel-badge active" id="chatBadge">SARVAM AI</span>
+          <button class="btn btn-sm btn-ghost" id="btnChatClear">CLEAR</button>
+        </div>
+      </div>
+      <div class="panel-body" style="padding:0;gap:0;">
+        <div class="chat-log" id="chatLog">
+          <div class="chat-empty">Ask SARAS anything — voice or type below 🪷</div>
+        </div>
+        <div class="chat-input-row">
+          <input type="text" id="chatInput" class="chat-input"
+            placeholder="Type a message or use voice..." autocomplete="off"/>
+          <button class="btn btn-primary btn-sm" id="btnChatSend">
+            <span class="btn-icon">➤</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ROW 2: Gamepad (full width) -->
+    <section class="panel gamepad-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">🎮</span> GAMEPAD</h2>
+        <span class="panel-badge" id="gamepadBadge">VIRTUAL MODE</span>
+      </div>
+      <div class="panel-body">
+        <div class="vgp-controller" id="virtualGamepad">
+          <div class="vgp-left">
+            <div class="vgp-section-label">JOYSTICK</div>
+            <div class="vgp-joystick-zone" id="vjZone">
+              <div class="vgp-joystick-base" id="vjBase">
+                <div class="vgp-joystick-ring"></div>
+                <div class="vgp-joy-arrow vgp-joy-up">▲</div>
+                <div class="vgp-joy-arrow vgp-joy-down">▼</div>
+                <div class="vgp-joy-arrow vgp-joy-left">◀</div>
+                <div class="vgp-joy-arrow vgp-joy-right">▶</div>
+                <div class="vgp-joystick-knob" id="vjKnob"></div>
+              </div>
+            </div>
+            <div class="vgp-axis-readout">
+              <span>X: <b id="vjAxisX">0.00</b></span>
+              <span>Y: <b id="vjAxisY">0.00</b></span>
+            </div>
+          </div>
+          <div class="vgp-center">
+            <div class="vgp-center-logo">🤖</div>
+            <div class="vgp-center-name">SARAS</div>
+            <div class="vgp-shoulder-row">
+              <button class="vgp-shoulder" id="vgpL1" data-cmd="L">L1</button>
+              <button class="vgp-shoulder" id="vgpR1" data-cmd="R">R1</button>
+            </div>
+            <div class="vgp-cmd-display" id="vgpCmdDisplay">STANDBY</div>
+            <div class="vgp-phys-status">
+              <span class="vgp-phys-dot" id="vgpPhysDot"></span>
+              <span id="vgpPhysLabel">No physical pad</span>
+            </div>
+          </div>
+          <div class="vgp-right">
+            <div class="vgp-section-label">D-PAD</div>
+            <div class="vgp-dpad">
+              <div class="vgp-dpad-row"><button class="vgp-dpad-btn vgp-dpad-up"    data-cmd="F">▲</button></div>
+              <div class="vgp-dpad-row vgp-dpad-mid-row">
+                <button class="vgp-dpad-btn vgp-dpad-left"   data-cmd="L">◀</button>
+                <button class="vgp-dpad-btn vgp-dpad-center" data-cmd="S">■</button>
+                <button class="vgp-dpad-btn vgp-dpad-right"  data-cmd="R">▶</button>
+              </div>
+              <div class="vgp-dpad-row"><button class="vgp-dpad-btn vgp-dpad-down"  data-cmd="B">▼</button></div>
+            </div>
+            <div class="vgp-section-label" style="margin-top:10px;">BUTTONS</div>
+            <div class="vgp-face-btns">
+              <div class="vgp-face-row"><button class="vgp-face-btn vgp-btn-f" data-cmd="F">F</button></div>
+              <div class="vgp-face-row vgp-face-mid-row">
+                <button class="vgp-face-btn vgp-btn-l" data-cmd="L">L</button>
+                <button class="vgp-face-btn vgp-btn-s" data-cmd="S">■</button>
+                <button class="vgp-face-btn vgp-btn-r" data-cmd="R">R</button>
+              </div>
+              <div class="vgp-face-row"><button class="vgp-face-btn vgp-btn-b" data-cmd="B">B</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="vgp-phys-panel" id="vgpPhysPanel">
+          <div class="gp-stat"><span class="gp-stat-label">AXIS X</span><span id="gpAxisX">0.00</span></div>
+          <div class="gp-stat"><span class="gp-stat-label">AXIS Y</span><span id="gpAxisY">0.00</span></div>
+          <div class="gp-stat"><span class="gp-stat-label">BUTTONS</span><span id="gpButtons">—</span></div>
+        </div>
+        <p class="gamepad-hint">Drag joystick · D-pad · Face buttons · USB/Bluetooth controller</p>
+      </div>
+    </section>
+
+    <!-- ROW 3: Face(1) | Obstacle(2) | Camera(3) -->
+
+    <!-- FACE TRACKING -->
+    <section class="panel face-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">◉</span> FACE TRACKING</h2>
+        <span class="panel-badge" id="faceBadge">STANDBY</span>
+      </div>
+      <div class="panel-body">
+        <div class="radar-container" id="radarContainer">
+          <div class="radar-ring r1"></div>
+          <div class="radar-ring r2"></div>
+          <div class="radar-ring r3"></div>
+          <div class="radar-sweep" id="radarSweep"></div>
+          <div class="radar-crosshair"></div>
+          <div class="face-box" id="faceDetectionBox"><span class="face-box-label">TARGET</span></div>
+          <div class="radar-dot" id="radarDot"></div>
+        </div>
+        <div class="face-controls">
+          <button class="btn btn-primary" id="btnFaceDetect">
+            <span class="btn-icon">◉</span> FOLLOW PERSON
+          </button>
+          <div class="face-stats"><span class="fs-label">OFFSET</span><span id="faceOffset">—</span> px</div>
+        </div>
+        <p class="browser-mode-note">▸ Uses device camera + face-api.js neural net in browser</p>
+      </div>
+    </section>
+
+    <!-- OBSTACLE SENSOR -->
+    <section class="panel obstacle-panel" id="obstaclePanel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">⚠</span> OBSTACLE SENSOR</h2>
+        <span class="panel-badge" id="obstacleBadge">CLEAR</span>
+      </div>
+      <div class="panel-body obstacle-body">
+        <div class="obstacle-visual" id="obstacleVisual">
+          <div class="obstacle-icon" id="obstacleIcon">
+            <div class="obs-triangle">⚠</div>
+            <div class="obs-ring ob1"></div>
+            <div class="obs-ring ob2"></div>
+          </div>
+          <div class="sensor-bars">
+            <div class="sensor-bar" id="sbar1"></div>
+            <div class="sensor-bar" id="sbar2"></div>
+            <div class="sensor-bar" id="sbar3"></div>
+            <div class="sensor-bar" id="sbar4"></div>
+            <div class="sensor-bar" id="sbar5"></div>
+          </div>
+        </div>
+        <p class="obstacle-status-text" id="obstacleStatusText">PATH CLEAR — NO OBSTACLES DETECTED</p>
+        <button class="btn btn-outline btn-sm" id="btnSimObstacle">⚡ SIMULATE OBSTACLE</button>
+      </div>
+    </section>
+
+    <!-- LIVE CAMERA -->
+    <section class="panel camera-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">📷</span> LIVE CAMERA</h2>
+        <span class="panel-badge" id="cameraBadge">OFF</span>
+      </div>
+      <div class="panel-body">
+
+        <!-- Arduino Web Serial connect panel -->
+        <div class="arduino-panel">
+          <button class="btn btn-outline btn-sm" id="btnArduinoConnect">🔌 CONNECT ARDUINO</button>
+          <span class="arduino-badge" id="arduinoStatusBadge">● DEMO</span>
+          <span class="mock-log" id="mockCmdLog">[DEMO] No Arduino connected</span>
+          <span class="dist-display" id="distDisplay"></span>
+        </div>
+
+        <!-- Camera feed — browser getUserMedia (NOT server MJPEG) -->
+        <div class="camera-container" id="cameraContainer" style="position:relative;">
+          <div class="camera-offline" id="cameraOffline">
+            <div class="cam-offline-icon">📷</div>
+            <p>Camera OFF</p>
+            <small>Click "Toggle Camera" or start face tracking</small>
+          </div>
+          <!-- video element for browser camera (replaces old MJPEG img) -->
+          <video id="cameraFeed" class="camera-feed" autoplay muted playsinline
+            style="display:none;opacity:0;transition:opacity 0.5s;"></video>
+          <!-- canvas overlay for face detection boxes -->
+          <canvas id="camCanvas" class="cam-canvas-overlay"
+            style="display:none;"></canvas>
+          <div class="camera-hud" id="cameraHud" style="display:none;">
+            <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
+            <div class="hud-corner bl"></div><div class="hud-corner br"></div>
+            <div class="hud-crosshair"></div>
+            <div class="hud-label" id="hudLabel">SARAS CAM</div>
+            <div class="hud-face-count" id="hudFaceCount"></div>
+          </div>
+        </div>
+
+        <!-- Camera buttons -->
+        <div class="camera-btn-row">
+          <button class="btn btn-outline" id="btnCameraToggle">📷 TOGGLE CAMERA</button>
+          <button class="btn btn-outline btn-sm" id="btnSnapshot" disabled>
+            <span class="btn-icon">📸</span> SNAPSHOT
+          </button>
+        </div>
+        <p class="browser-mode-note">▸ Camera runs in browser · Arduino: Chrome/Edge only (Web Serial)</p>
+      </div>
+    </section>
+
+    <!-- ROW 4: SmartTrack(1-2) | Command Log(3) -->
+
+    <!-- SMART TRACKING -->
+    <section class="panel smart-track-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">🎯</span> SMART PERSON TRACKING</h2>
+        <span class="panel-badge" id="smartTrackBadge">STANDBY</span>
+      </div>
+      <div class="panel-body">
+        <div class="track-status-grid">
+          <div class="track-stat"><span class="ts-label">TARGET</span><span class="ts-value" id="targetStatus">NOT REGISTERED</span></div>
+          <div class="track-stat"><span class="ts-label">SERVO</span><span class="ts-value" id="servoAngle">90°</span></div>
+          <div class="track-stat"><span class="ts-label">OFFSET</span><span class="ts-value" id="trackOffset">—</span></div>
+          <div class="track-stat"><span class="ts-label">ACTION</span><span class="ts-value" id="trackAction">—</span></div>
+        </div>
+        <div class="servo-visual">
+          <div class="servo-track">
+            <div class="servo-indicator" id="servoIndicator"></div>
+            <span class="servo-left">◄ LEFT</span>
+            <span class="servo-right">RIGHT ►</span>
+          </div>
+          <div class="servo-angle-display" id="servoAngleDisplay">90°</div>
+        </div>
+        <div class="track-log" id="trackLog"><span class="tl-idle">Waiting for target registration...</span></div>
+        <!-- Inline Name Input — shown when REGISTER is clicked -->
+        <div class="register-name-row" id="registerNameRow" style="display:none;">
+          <input type="text" id="faceNameInput" class="face-name-input" placeholder="Enter name (e.g. Ravi)" maxlength="30" autocomplete="off" />
+          <button class="btn btn-primary btn-sm" id="btnFaceNameConfirm">✓ SAVE</button>
+          <button class="btn btn-ghost btn-sm" id="btnFaceNameCancel">✕</button>
+        </div>
+
+        <div class="smart-track-controls">
+          <button class="btn btn-outline" id="btnRegisterTarget"><span class="btn-icon">👤</span> REGISTER TARGET</button>
+          <button class="btn btn-primary" id="btnSmartTrack" disabled><span class="btn-icon">🎯</span> START TRACKING</button>
+        </div>
+
+        <!-- Saved Faces Section (browser session only) -->
+        <div class="saved-faces-section">
+          <div class="saved-faces-header">
+            <span class="sf-title">📁 REGISTERED FACES</span>
+            <button class="btn btn-sm btn-ghost" id="btnRefreshFaces">↻ REFRESH</button>
+          </div>
+          <div class="saved-faces-list" id="savedFacesList">
+            <span class="sf-empty">No faces registered yet.</span>
+          </div>
+        </div>
+
+        <div class="track-instructions">
+          <p>① Open camera → stand in frame → click <b>REGISTER TARGET</b> → enter name → ✓</p>
+          <p>② Or click a registered face below → <b>LOAD</b></p>
+          <p>③ Click <b>START TRACKING</b> → SARAS follows only that person</p>
+          <p class="browser-mode-note">▸ Face recognition runs entirely in browser — no data sent to server</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- COMMAND LOG -->
+    <section class="panel log-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">▤</span> COMMAND LOG</h2>
+        <button class="btn btn-sm btn-ghost" id="btnClearLog">CLEAR</button>
+      </div>
+      <div class="panel-body">
+        <div class="log-container" id="commandLog">
+          <div class="log-empty">No commands yet.</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <span>SARAS v3.0</span>
+    <span>Browser Camera + Web Serial + Sarvam AI</span>
+    <span>🪷 Inspired by Goddess Saraswati</span>
+  </footer>
+
+</div><!-- /#ctrl -->
+
+
+<!-- OVERLAYS -->
+<div class="intro-overlay" id="introOverlay">
+  <div class="intro-card">
+    <div class="intro-robot-face">
+      <div class="ir-eye left pulsing"></div>
+      <div class="ir-eye right pulsing"></div>
+      <div class="ir-mouth speaking"><span></span><span></span><span></span><span></span><span></span></div>
+    </div>
+    <div class="intro-waves">
+      <div class="iw-bar" style="--d:0"></div><div class="iw-bar" style="--d:1"></div>
+      <div class="iw-bar" style="--d:2"></div><div class="iw-bar" style="--d:3"></div>
+      <div class="iw-bar" style="--d:4"></div><div class="iw-bar" style="--d:5"></div>
+      <div class="iw-bar" style="--d:6"></div><div class="iw-bar" style="--d:7"></div>
+    </div>
+    <p class="intro-text" id="introText">Hello! I am SARAS, an AI powered robot...</p>
+    <div class="intro-mic-glow">🎙</div>
+    <button class="btn btn-ghost intro-close" id="introClose">✕ CLOSE</button>
+  </div>
+</div>
+
+<div class="obstacle-overlay" id="obstacleOverlay">
+  <div class="ob-flash">
+    <div class="ob-icon">⚠</div>
+    <div class="ob-text">OBSTACLE DETECTED<br><small>AUTO-STOPPED</small></div>
+  </div>
+</div>
+
+<button id="btnKnowMe" style="display:none;"></button>
+
+<!-- Browser-side modules (loaded before main script.js) -->
+<script src="/static/webserial.js"></script>
+<script src="/static/camera.js"></script>
+<script src="/static/animations.js"></script>
+<script src="/static/script.js"></script>
+</body>
+</html>

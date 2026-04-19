@@ -1,0 +1,19 @@
+# Environments
+.env
+
+# SSL Certificates
+*.pem
+*.key
+*.cer
+cert.pem
+key.pem
+
+# Saved Face Data
+saved_faces/
+*.pkl
+
+# Python artifacts
+__pycache__/
+*.pyc
+venv/
+env/

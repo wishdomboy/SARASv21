@@ -1,0 +1,29 @@
+# SARAS — Python Requirements (Cloud / Deployment Edition)
+# ═══════════════════════════════════════════════════════════
+#
+# Install:
+#   pip install -r requirements.txt
+#
+# Ubuntu/Jetson (if still running locally):
+#   pip3 install -r requirements.txt --break-system-packages
+# ═══════════════════════════════════════════════════════════
+
+# Web Server
+flask==2.3.3
+flask-socketio==5.3.6
+Werkzeug==2.3.7
+eventlet==0.33.3
+
+# Chatbot (Sarvam AI)
+requests==2.32.3
+python-dotenv==1.0.1
+urllib3==2.2.3
+
+# REMOVED (now browser-side):
+#   opencv-python  — camera uses getUserMedia in browser
+#   dlib           — face detection uses face-api.js in browser
+#   face-recognition
+#   pyserial       — Arduino uses Web Serial API in browser
+#   numpy          — not needed without opencv
+#   pygame         — TTS is browser speechSynthesis
+#   cryptography   — no self-signed SSL needed (Render provides HTTPS)
