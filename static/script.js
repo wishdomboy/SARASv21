@@ -205,11 +205,15 @@ function updateConnectionStatus(online) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 const _CMD_LABELS_UI = {
-  'F':('FORWARD','Moving Forward'),  'W':('FORWARD','Moving Forward'),
-  'B':('BACKWARD','Moving Backward'),'S':('STOPPED','Stopped'),
-  'X':('STOPPED','Stopped'),         'L':('LEFT','Turning Left'),
-  'A':('LEFT','Turning Left'),       'R':('RIGHT','Turning Right'),
-  'D':('RIGHT','Turning Right'),
+  'F': ['FORWARD',  'Moving Forward'],
+  'W': ['FORWARD',  'Moving Forward'],
+  'B': ['BACKWARD', 'Moving Backward'],
+  'S': ['STOPPED',  'Stopped'],
+  'X': ['STOPPED',  'Stopped'],
+  'L': ['LEFT',     'Turning Left'],
+  'A': ['LEFT',     'Turning Left'],
+  'R': ['RIGHT',    'Turning Right'],
+  'D': ['RIGHT',    'Turning Right'],
 };
 
 function sendCommand(cmd, source = 'Manual') {
@@ -1105,7 +1109,7 @@ function refreshSavedFacesList() {
     item.innerHTML = `
       <span class="sf-name">👤 ${escapeHtml(name)}</span>
       <button class="btn btn-sm btn-ghost sf-load-btn" data-name="${escapeHtml(name)}">LOAD</button>
-      <button class="btn btn-sm btn-ghost sf-del-btn" data-name="${escapeHtml(name)}" style="color:#ff6666;margin-left:4px">✕</button>`;
+      <button class="btn btn-sm btn-ghost sf-del-btn" data-name="${escapeHtml(name)}" style="color:#ff6666;margin-left:4px;">✕ DEL</button>`;
     list.appendChild(item);
   });
 

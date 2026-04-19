@@ -1,55 +1,36 @@
 /**
- * camera.js — SARAS Browser Camera + Face Detection/Tracking
- * ============================================================
- * All runs locally on the user's device — no camera data sent to server.
- *
- * Fixes in this version:
- *  ✅ Dropped ssdMobilenetv1 (heavy 6MB — was causing registration failures)
- *  ✅ TinyFaceDetector used for everything (fast, reliable, ~2MB total)
- *  ✅ registerFace() waits for models with a timeout + clear UI feedback
- *  ✅ 3-attempt retry for face detection during registration
- *  ✅ Model load badge shows real progress, resets correctly
- *  ✅ No silent failures — every error surfaces to the trackLog UI
- *
- * Models loaded (~2MB total, cached by browser after first load):
- *   - tinyFaceDetector       (~180 KB)
- *   - faceLandmark68TinyNet  (~80 KB)
- *   - faceRecognitionNet     (~1.7 MB) — needed for smart track descriptors
- *
- * Exposed as window.BrowserCamera
+ * camera.js — SARAS Browser Camera + Face Detection
+ * Clean rewrite — April 2026
  */
-
 'use strict';
 
 (function () {
 
-  const MODELS_URL = '/static/weights';   // served from our own Flask server — no CDN
-  const DEAD_ZONE  = 0.15;   // 15% center dead-zone — reduces servo jitter
+  // Use GitHub CDN — fast, reliable, has the weight files
+  const MODELS_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
 
-  // ── State ───────────────────────────────────────────────────────────────────
+  // ── State ──────────────────────────────────────────────────────────────────
   let _video         = null;
   let _canvas        = null;
   let _stream        = null;
   let _animFrame     = null;
-
   let _modelsLoaded  = false;
   let _modelsLoading = false;
-  let _modelsError   = false;
-
   let _followActive  = false;
   let _smartActive   = false;
+  let _lastCmd       = null;
 
+  // Face registration
   let _registeredDescriptor = null;
   let _registeredName       = '';
-  let _savedFaces           = {};   // { name: Array<number> }
+  let _savedFaces           = {};
 
-  let _lastCmd = null;
-
+  // Callbacks
   let _onFaceDetected = null;
   let _onFaceLost     = null;
   let _onTrackCmd     = null;
 
-  // ── UI helpers ──────────────────────────────────────────────────────────────
+  // ── UI Helpers ─────────────────────────────────────────────────────────────
 
   function _setBadge(text, cls) {
     const el = document.getElementById('cameraBadge');
@@ -58,106 +39,88 @@
     el.className   = 'panel-badge ' + (cls || '');
   }
 
-  function _trackLog(msg, cls) {
+  function _log(msg, cls) {
     const log = document.getElementById('trackLog');
     if (!log) return;
     const idle = log.querySelector('.tl-idle');
     if (idle) idle.remove();
     const el = document.createElement('div');
-    el.className = `tl-entry ${cls || ''}`;
-    el.textContent = `[${new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}] ${msg}`;
+    el.className   = 'tl-entry ' + (cls || '');
+    el.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
     log.prepend(el);
-    if (log.children.length > 10) log.removeChild(log.lastChild);
+    while (log.children.length > 15) log.removeChild(log.lastChild);
   }
 
-  // ── localStorage face persistence ───────────────────────────────────────────
+  // ── localStorage ──────────────────────────────────────────────────────────
 
   function _saveFaces() {
-    try {
-      localStorage.setItem('saras_saved_faces', JSON.stringify(_savedFaces));
-      console.log('[FACE] Saved', Object.keys(_savedFaces).length, 'face(s) to localStorage');
-    } catch(e) { console.warn('[FACE] localStorage save failed:', e); }
+    try { localStorage.setItem('saras_faces', JSON.stringify(_savedFaces)); } catch (e) {}
   }
 
   function _loadFaces() {
     try {
-      const raw = localStorage.getItem('saras_saved_faces');
-      if (raw) {
-        _savedFaces = JSON.parse(raw);
-        console.log('[FACE] Loaded', Object.keys(_savedFaces).length, 'face(s) from localStorage:', Object.keys(_savedFaces));
-      }
-    } catch(e) { console.warn('[FACE] localStorage load failed:', e); }
+      const raw = localStorage.getItem('saras_faces');
+      if (raw) _savedFaces = JSON.parse(raw);
+    } catch (e) {}
   }
 
-  // ── Model loading ───────────────────────────────────────────────────────────
+  // ── Model Loading ─────────────────────────────────────────────────────────
 
   async function loadModels() {
     if (_modelsLoaded || _modelsLoading) return;
     _modelsLoading = true;
-    _modelsError   = false;
-
-    console.log('[FACE] Loading models...');
+    console.log('[FACE] Loading models from CDN...');
 
     try {
+      // tinyFaceDetector — fast detection
       await faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URL);
       console.log('[FACE] tinyFaceDetector ready');
 
+      // faceLandmark68TinyNet — needed for withFaceLandmarks(true)
       await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODELS_URL);
       console.log('[FACE] faceLandmark68TinyNet ready');
 
+      // faceRecognitionNet — needed for descriptors (smart track)
       await faceapi.nets.faceRecognitionNet.loadFromUri(MODELS_URL);
       console.log('[FACE] faceRecognitionNet ready');
 
       _modelsLoaded  = true;
       _modelsLoading = false;
       console.log('[FACE] All models ready');
+      _log('✅ Face models ready!', 'found');
 
-      // Fix badge if it was stuck on LOADING
-      const el = document.getElementById('cameraBadge');
-      if (el && el.textContent.includes('LOADING')) {
-        el.textContent = _stream ? 'LIVE' : 'OFF';
-        el.className   = _stream ? 'panel-badge active' : 'panel-badge';
+      // Restore badge
+      const badge = document.getElementById('cameraBadge');
+      if (badge && badge.textContent.includes('LOADING')) {
+        badge.textContent = _stream ? '● LIVE' : 'OFF';
+        badge.className   = _stream ? 'panel-badge active' : 'panel-badge';
       }
 
     } catch (err) {
       _modelsLoading = false;
-      _modelsError   = true;
-      console.error('[FACE] Model load error:', err);
-      _setBadge('MODEL ERR', 'danger');
-      _trackLog('⚠ Models failed. Click REGISTER TARGET to retry automatically.', 'bypass');
+      console.error('[FACE] Model load error:', err.message);
+      _setBadge('RETRY →', 'danger');
+      _log('⚠ Models failed to load. Click REGISTER TARGET to retry.', 'bypass');
     }
   }
 
+  // Wait up to timeoutMs for models to load
   async function waitForModels(timeoutMs) {
-    timeoutMs = timeoutMs || 90000;
     if (_modelsLoaded) return true;
 
-    // If previous attempt failed, reset and retry
-    if (_modelsError) {
-      console.log('[FACE] Previous load failed — retrying...');
-      _modelsError   = false;
-      _modelsLoading = false;
-    }
+    // Reset error state so we can retry
+    _modelsLoading = false;
+    loadModels();
 
-    // Start loading if not already in progress
-    if (!_modelsLoading) loadModels();
-
-    const deadline = Date.now() + timeoutMs;
-    let dotCount = 0;
-    while (!_modelsLoaded && !_modelsError) {
-      if (Date.now() > deadline) return false;
-      // Update badge every 3s so user knows it is working
-      dotCount++;
-      if (dotCount % 6 === 0) {
-        const elapsed = Math.round((Date.now() - (deadline - timeoutMs)) / 1000);
-        _setBadge(`⏳ ${elapsed}s`, 'warning');
-      }
+    const end = Date.now() + (timeoutMs || 60000);
+    while (!_modelsLoaded) {
+      if (Date.now() > end) return false;
       await new Promise(r => setTimeout(r, 500));
     }
-    return _modelsLoaded;
+    return true;
   }
 
-  // ── Camera ──────────────────────────────────────────────────────────────────
+  // ── Camera ─────────────────────────────────────────────────────────────────
 
   async function start(videoEl, canvasEl) {
     _video  = videoEl;
@@ -177,12 +140,13 @@
         _canvas.style.display = 'block';
       }
 
+      // Start loading models if not already loading
       if (!_modelsLoaded && !_modelsLoading) loadModels();
 
       console.log('[CAM] Camera started');
       return true;
     } catch (err) {
-      console.error('[CAM] Start failed:', err);
+      console.error('[CAM]', err.message);
       return false;
     }
   }
@@ -192,8 +156,8 @@
     _smartActive  = false;
     _lastCmd      = null;
     if (_animFrame) { clearTimeout(_animFrame); _animFrame = null; }
-    if (_stream)    { _stream.getTracks().forEach(t => t.stop()); _stream = null; }
-    if (_video)     { _video.srcObject = null; }
+    if (_stream) { _stream.getTracks().forEach(t => t.stop()); _stream = null; }
+    if (_video) _video.srcObject = null;
     if (_canvas) {
       _canvas.style.display = 'none';
       _canvas.getContext('2d').clearRect(0, 0, _canvas.width, _canvas.height);
@@ -210,126 +174,115 @@
     return c.toDataURL('image/jpeg', 0.9);
   }
 
-  // ── Detection helpers ────────────────────────────────────────────────────────
+  // ── Face Detection ─────────────────────────────────────────────────────────
 
   async function _detectAll() {
     if (!_video || !_modelsLoaded || _video.readyState < 2) return [];
     try {
+      // IMPORTANT: withFaceLandmarks(true) = use tiny model (which we loaded)
+      // withFaceLandmarks() without arg = full model (not loaded) → would fail
       return await faceapi
         .detectAllFaces(_video, new faceapi.TinyFaceDetectorOptions({
-          scoreThreshold: 0.4,
-          inputSize: 320,
+          scoreThreshold: 0.3,
+          inputSize: 416,
         }))
-        .withFaceLandmarks()
+        .withFaceLandmarks(true)
         .withFaceDescriptors();
     } catch (e) {
+      console.warn('[FACE] detect error:', e.message);
       return [];
     }
   }
 
-  function _getLargest(detections) {
+  function _largest(detections) {
     return detections.reduce((a, b) =>
       a.detection.box.area > b.detection.box.area ? a : b
     );
   }
 
-  function _draw(detections, highlightIdx) {
+  function _draw(detections, hiIdx) {
     if (!_canvas || !_video) return;
     const ctx = _canvas.getContext('2d');
     _canvas.width  = _video.videoWidth  || 640;
     _canvas.height = _video.videoHeight || 480;
     ctx.clearRect(0, 0, _canvas.width, _canvas.height);
-
     detections.forEach((d, i) => {
       const box = d.detection.box;
-      const hi  = (i === highlightIdx);
+      const hi  = i === hiIdx;
       ctx.strokeStyle = hi ? '#ff44aa' : '#00ff88';
       ctx.lineWidth   = hi ? 3 : 2;
       ctx.strokeRect(box.x, box.y, box.width, box.height);
-      ctx.fillStyle = hi ? 'rgba(255,68,170,0.12)' : 'rgba(0,255,136,0.08)';
+      ctx.fillStyle   = hi ? 'rgba(255,68,170,0.1)' : 'rgba(0,255,136,0.06)';
       ctx.fillRect(box.x, box.y, box.width, box.height);
       if (hi && _registeredName) {
         ctx.fillStyle = '#ff44aa';
-        ctx.font = 'bold 13px monospace';
+        ctx.font = 'bold 14px monospace';
         ctx.fillText(_registeredName, box.x + 4, box.y - 6);
       }
     });
   }
 
-  // Minimum face width (px at 640 wide) that means robot is "close enough"
-  // If face is smaller → robot moves forward
-  const FACE_CLOSE_WIDTH = 140;
-
   function _sendTrackCmd(box) {
     const vw   = (_video && _video.videoWidth) ? _video.videoWidth : 640;
     const cx   = box.x + box.width / 2;
-    const dead = vw * DEAD_ZONE;
+    const dead = vw * 0.15;
     const mid  = vw / 2;
 
-    // ── Servo pan command ──────────────────────────────────────────────────
-    const servoCmd = cx < mid - dead ? 'J' : cx > mid + dead ? 'K' : 'C';
-    if (servoCmd !== _lastCmd) {
-      _lastCmd = servoCmd;
-      if (window.ArduinoSerial) window.ArduinoSerial.sendCmd(servoCmd);
-      if (_onTrackCmd) _onTrackCmd(servoCmd, box);
+    // Servo pan
+    const servo = cx < mid - dead ? 'J' : cx > mid + dead ? 'K' : 'C';
+    if (servo !== _lastCmd) {
+      _lastCmd = servo;
+      if (window.ArduinoSerial) window.ArduinoSerial.sendCmd(servo);
+      if (_onTrackCmd) _onTrackCmd(servo, box);
     }
 
-    // ── Robot body movement (only during smart track, not follow) ──────────
-    // Turn to face the person, then move forward when centered
+    // Body movement (only during smart track)
     if (_smartActive && window.sendCommand) {
+      const closeWidth = 150;
       let bodyCmd;
-      if (cx < mid - dead) {
-        bodyCmd = 'L';   // face is left  → turn left
-      } else if (cx > mid + dead) {
-        bodyCmd = 'R';   // face is right → turn right
-      } else if (box.width < FACE_CLOSE_WIDTH) {
-        bodyCmd = 'F';   // centered but far → move forward
-      } else {
-        bodyCmd = 'S';   // centered and close → stop
-      }
-      // Only emit body command when it changes (avoid flooding)
-      if (bodyCmd !== window._lastTrackBodyCmd) {
-        window._lastTrackBodyCmd = bodyCmd;
+      if      (cx < mid - dead)       bodyCmd = 'L';
+      else if (cx > mid + dead)       bodyCmd = 'R';
+      else if (box.width < closeWidth) bodyCmd = 'F';
+      else                             bodyCmd = 'S';
+
+      if (bodyCmd !== window._lastBodyCmd) {
+        window._lastBodyCmd = bodyCmd;
         window.sendCommand(bodyCmd, 'SmartTrack');
       }
     }
   }
 
-  // ── Follow mode ──────────────────────────────────────────────────────────────
+  // ── Follow Mode ────────────────────────────────────────────────────────────
 
   async function _followLoop() {
     if (!_followActive) return;
-    const detections = await _detectAll();
-
-    if (detections.length > 0) {
-      const t = _getLargest(detections);
-      _draw(detections, detections.indexOf(t));
+    const det = await _detectAll();
+    if (det.length > 0) {
+      const t = _largest(det);
+      _draw(det, det.indexOf(t));
       _sendTrackCmd(t.detection.box);
       if (_onFaceDetected) _onFaceDetected({
         x: t.detection.box.x, y: t.detection.box.y,
         width: t.detection.box.width, height: t.detection.box.height,
-        count: detections.length,
+        count: det.length,
       });
     } else {
       if (_canvas) _canvas.getContext('2d').clearRect(0, 0, _canvas.width, _canvas.height);
       _lastCmd = null;
       if (_onFaceLost) _onFaceLost();
     }
-
-    if (_followActive) {
-      _animFrame = setTimeout(() => requestAnimationFrame(() => _followLoop()), 120);
-    }
+    if (_followActive) _animFrame = setTimeout(() => _followLoop(), 120);
   }
 
   async function startFollow() {
-    _trackLog('⏳ Starting follow — waiting for models...', 'scanning');
-    const ready = await waitForModels(25000);
-    if (!ready) { _trackLog('⚠ Models failed to load. Check internet.', 'bypass'); return; }
+    _log('⏳ Starting follow mode — waiting for models...', 'scanning');
+    const ok = await waitForModels(60000);
+    if (!ok) { _log('⚠ Models failed. Check internet and try again.', 'bypass'); return; }
     _followActive = true;
     _smartActive  = false;
     if (_animFrame) { clearTimeout(_animFrame); _animFrame = null; }
     _followLoop();
-    _trackLog('✅ Following nearest face', 'found');
+    _log('✅ Following nearest face', 'found');
   }
 
   function stopFollow() {
@@ -339,66 +292,51 @@
     if (_canvas) _canvas.getContext('2d').clearRect(0, 0, _canvas.width, _canvas.height);
   }
 
-  // ── Register face ────────────────────────────────────────────────────────────
+  // ── Register Face ──────────────────────────────────────────────────────────
 
   async function registerFace(name) {
-
-    // 1. Wait for models
+    // Wait for models
     if (!_modelsLoaded) {
-      _trackLog('⏳ Face models loading... please wait (may take 20-60s on first use)', 'scanning');
-      _setBadge('⏳ LOADING', 'warning');
-      let t = 0;
-      const ticker = setInterval(() => {
-        t++;
-        _trackLog(`⏳ Loading models — ${t}s... (large files, please wait)`, 'scanning');
-      }, 1000);
-      const ready = await waitForModels(90000);   // 90 second timeout for slow connections
-      clearInterval(ticker);
-
-      if (!ready) {
-        _trackLog('⚠ Models timed out after 90s. Check internet speed and try again.', 'bypass');
-        _setBadge('MODEL ERR', 'danger');
-        return false;
-      }
-      _trackLog('✅ Models loaded! Detecting face now...', 'found');
+      _log('⏳ Loading face models (may take 20–60s first time)...', 'scanning');
+      const ok = await waitForModels(90000);
+      if (!ok) { _log('⚠ Models failed to load. Check connection.', 'bypass'); return false; }
     }
 
-    // 2. Verify camera
+    // Check camera
     if (!_video || _video.readyState < 2 || !_stream) {
-      _trackLog('⚠ Camera not active. Click "Toggle Camera" first.', 'bypass');
+      _log('⚠ Camera not active — click Toggle Camera first.', 'bypass');
       return false;
     }
 
-    // 3. Detect face (up to 4 attempts)
-    _trackLog('📸 Detecting face — look at camera and stay still...', 'scanning');
+    // Detect face — up to 5 attempts
+    _log('📸 Look at camera and stay still...', 'scanning');
     let detections = [];
-    for (let attempt = 1; attempt <= 4; attempt++) {
+    for (let i = 1; i <= 5; i++) {
       detections = await _detectAll();
       if (detections.length > 0) break;
-      _trackLog(`🔍 Attempt ${attempt}/4 — no face yet, stay still...`, 'scanning');
-      await new Promise(r => setTimeout(r, 700));
+      _log('🔍 Attempt ' + i + '/5 — no face yet...', 'scanning');
+      await new Promise(r => setTimeout(r, 600));
     }
 
     if (detections.length === 0) {
-      _trackLog('⚠ No face detected after 4 tries. Check: face clearly visible, good lighting, camera on.', 'bypass');
+      _log('⚠ No face detected. Ensure good lighting and face clearly visible.', 'bypass');
       return false;
     }
 
-    // 4. Get descriptor from largest face
-    const target     = _getLargest(detections);
+    const target     = _largest(detections);
     const descriptor = target.descriptor;
 
     if (!descriptor || descriptor.length !== 128) {
-      _trackLog('⚠ Face descriptor failed. Improve lighting and try again.', 'bypass');
+      _log('⚠ Descriptor failed. Try again in better lighting.', 'bypass');
       return false;
     }
 
-    // 5. Save
     _registeredDescriptor = descriptor;
     _registeredName       = name;
     _savedFaces[name]     = Array.from(descriptor);
+    _saveFaces();
 
-    // Flash confirmation box for 2s
+    // Flash green box for 2s
     _draw(detections, detections.indexOf(target));
     setTimeout(() => {
       if (_canvas && !_followActive && !_smartActive) {
@@ -406,90 +344,18 @@
       }
     }, 2000);
 
-    // Persist to localStorage so faces survive page refresh
-    _saveFaces();
-
-    console.log(`[FACE] Registered '${name}', descriptor length: ${descriptor.length}`);
+    console.log('[FACE] Registered:', name);
     return true;
   }
 
-  // ── Smart track ──────────────────────────────────────────────────────────────
+  function getSavedFaces()  { return Object.keys(_savedFaces); }
+  function hasTarget()      { return _registeredDescriptor !== null; }
+  function isModelsLoaded() { return _modelsLoaded; }
 
-  async function _smartLoop() {
-    if (!_smartActive || !_registeredDescriptor) return;
-    const detections = await _detectAll();
-
-    if (detections.length === 0) {
-      if (_canvas) _canvas.getContext('2d').clearRect(0, 0, _canvas.width, _canvas.height);
-      _lastCmd = null;
-      if (_onFaceLost) _onFaceLost();
-    } else {
-      const matcher = new faceapi.FaceMatcher(
-        [new faceapi.LabeledFaceDescriptors(_registeredName, [_registeredDescriptor])],
-        0.6
-      );
-      let best = null, bestDist = 1;
-      detections.forEach(d => {
-        const r = matcher.findBestMatch(d.descriptor);
-        if (r.label !== 'unknown' && r.distance < bestDist) { bestDist = r.distance; best = d; }
-      });
-      _draw(detections, best ? detections.indexOf(best) : -1);
-      if (best) {
-        _sendTrackCmd(best.detection.box);
-        if (_onFaceDetected) _onFaceDetected({
-          x: best.detection.box.x, y: best.detection.box.y,
-          width: best.detection.box.width, height: best.detection.box.height,
-          count: detections.length, name: _registeredName,
-        });
-      } else {
-        _lastCmd = null;
-        if (_onFaceLost) _onFaceLost();
-      }
-    }
-
-    if (_smartActive) {
-      _animFrame = setTimeout(() => requestAnimationFrame(() => _smartLoop()), 150);
-    }
-  }
-
-  async function startSmartTrack() {
-    if (!_registeredDescriptor) { _trackLog('⚠ No target registered. Click REGISTER TARGET first.', 'bypass'); return; }
-    const ready = await waitForModels(15000);
-    if (!ready) { _trackLog('⚠ Models not ready. Refresh and try again.', 'bypass'); return; }
-    _smartActive  = true;
-    _followActive = false;
-    if (_animFrame) { clearTimeout(_animFrame); _animFrame = null; }
-    _smartLoop();
-  }
-
-  function stopSmartTrack() {
-    _smartActive = false;
-    _lastCmd = null;
-    if (_animFrame) { clearTimeout(_animFrame); _animFrame = null; }
-    if (_canvas) _canvas.getContext('2d').clearRect(0, 0, _canvas.width, _canvas.height);
-  }
-
-  function onFaceDetected(fn) { _onFaceDetected = fn; }
-  function onFaceLost(fn)     { _onFaceLost     = fn; }
-  function onTrackCmd(fn)     { _onTrackCmd     = fn; }
-  function isModelsLoaded()   { return _modelsLoaded; }
-
-  window.BrowserCamera = {
-    loadModels, waitForModels,
-    start, stop, takeSnapshot,
-    startFollow, stopFollow,
-    startSmartTrack, stopSmartTrack,
-    registerFace, getSavedFaces, loadFace, deleteFace, clearAllFaces, hasTarget,
-    onFaceDetected, onFaceLost, onTrackCmd,
-    isModelsLoaded,
-  };
-
-  function getSavedFaces() { return Object.keys(_savedFaces); }
   function loadFace(name) {
     if (!_savedFaces[name]) return false;
     _registeredDescriptor = new Float32Array(_savedFaces[name]);
     _registeredName       = name;
-    console.log(`[FACE] Loaded '${name}' as tracking target`);
     return true;
   }
 
@@ -497,33 +363,90 @@
     if (!_savedFaces[name]) return false;
     delete _savedFaces[name];
     _saveFaces();
-    if (_registeredName === name) {
-      _registeredDescriptor = null;
-      _registeredName = '';
-    }
+    if (_registeredName === name) { _registeredDescriptor = null; _registeredName = ''; }
     return true;
   }
 
-  function clearAllFaces() {
-    _savedFaces = {};
-    _registeredDescriptor = null;
-    _registeredName = '';
-    try { localStorage.removeItem('saras_saved_faces'); } catch(e) {}
-  }
-  function hasTarget() { return _registeredDescriptor !== null; }
+  // ── Smart Track ────────────────────────────────────────────────────────────
 
-  // Load saved faces from localStorage on startup
+  async function _smartLoop() {
+    if (!_smartActive || !_registeredDescriptor) return;
+    const det = await _detectAll();
+
+    if (det.length === 0) {
+      if (_canvas) _canvas.getContext('2d').clearRect(0, 0, _canvas.width, _canvas.height);
+      _lastCmd = null;
+      if (_onFaceLost) _onFaceLost();
+    } else {
+      const matcher = new faceapi.FaceMatcher(
+        [new faceapi.LabeledFaceDescriptors(_registeredName, [_registeredDescriptor])], 0.6
+      );
+      let best = null, bestDist = 1;
+      det.forEach(d => {
+        const r = matcher.findBestMatch(d.descriptor);
+        if (r.label !== 'unknown' && r.distance < bestDist) { bestDist = r.distance; best = d; }
+      });
+
+      _draw(det, best ? det.indexOf(best) : -1);
+
+      if (best) {
+        _sendTrackCmd(best.detection.box);
+        if (_onFaceDetected) _onFaceDetected({
+          x: best.detection.box.x, y: best.detection.box.y,
+          width: best.detection.box.width, height: best.detection.box.height,
+          count: det.length, name: _registeredName,
+        });
+      } else {
+        _lastCmd = null;
+        if (_onFaceLost) _onFaceLost();
+      }
+    }
+
+    if (_smartActive) _animFrame = setTimeout(() => _smartLoop(), 150);
+  }
+
+  async function startSmartTrack() {
+    if (!_registeredDescriptor) { _log('⚠ Register a target first.', 'bypass'); return; }
+    const ok = await waitForModels(30000);
+    if (!ok) { _log('⚠ Models not ready.', 'bypass'); return; }
+    _smartActive  = true;
+    _followActive = false;
+    if (_animFrame) { clearTimeout(_animFrame); _animFrame = null; }
+    _smartLoop();
+  }
+
+  function stopSmartTrack() {
+    _smartActive       = false;
+    _lastCmd           = null;
+    window._lastBodyCmd = null;
+    if (_animFrame) { clearTimeout(_animFrame); _animFrame = null; }
+    if (_canvas) _canvas.getContext('2d').clearRect(0, 0, _canvas.width, _canvas.height);
+    // Stop robot
+    if (window.ArduinoSerial) window.ArduinoSerial.sendCmd('S');
+  }
+
+  // ── Callbacks ──────────────────────────────────────────────────────────────
+  function onFaceDetected(fn) { _onFaceDetected = fn; }
+  function onFaceLost(fn)     { _onFaceLost     = fn; }
+  function onTrackCmd(fn)     { _onTrackCmd     = fn; }
+
+  // ── Expose ─────────────────────────────────────────────────────────────────
+  window.BrowserCamera = {
+    loadModels, waitForModels,
+    start, stop, takeSnapshot,
+    startFollow, stopFollow,
+    startSmartTrack, stopSmartTrack,
+    registerFace, getSavedFaces, loadFace, deleteFace, hasTarget,
+    onFaceDetected, onFaceLost, onTrackCmd,
+    isModelsLoaded,
+  };
+
+  // Load faces from localStorage immediately
   _loadFaces();
 
-  // Start loading models as early as possible — DOMContentLoaded fires before images/scripts finish
-  // This gives models maximum time to load before user needs them
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', loadModels);
-  } else {
-    // Already loaded (script is deferred)
-    loadModels();
-  }
+  // Start loading models immediately when script runs
+  setTimeout(loadModels, 100);
 
-  console.log('[BrowserCamera] Module loaded. Models loading immediately.');
+  console.log('[BrowserCamera] Module loaded.');
 
 })();
