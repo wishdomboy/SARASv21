@@ -193,10 +193,10 @@ body{font-family:var(--font-body);font-size:15px;line-height:1.6;min-height:100v
 .manual-panel      {grid-column:2;    grid-row:1}
 .chat-panel        {grid-column:3;    grid-row:1}
 .gamepad-panel     {grid-column:1/-1; grid-row:2}
-.face-panel        {grid-column:1;    grid-row:3}
-.obstacle-panel    {grid-column:2;    grid-row:3}
+.smart-track-panel {grid-column:1/3;  grid-row:3}
 .camera-panel      {grid-column:3;    grid-row:3}
-.smart-track-panel {grid-column:1/3;  grid-row:4}
+.face-panel        {grid-column:1;    grid-row:4}
+.obstacle-panel    {grid-column:2;    grid-row:4}
 .log-panel         {grid-column:3;    grid-row:4}
 
 .panel{background:var(--bg-panel);display:flex;flex-direction:column;border:1px solid transparent;transition:border-color var(--transition);position:relative;overflow:hidden}
