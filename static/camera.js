@@ -23,7 +23,7 @@
 
 (function () {
 
-  const MODELS_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
+  const MODELS_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
   const DEAD_ZONE  = 0.15;   // 15% center dead-zone — reduces servo jitter
 
   // ── State ───────────────────────────────────────────────────────────────────
@@ -68,6 +68,25 @@
     el.textContent = `[${new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}] ${msg}`;
     log.prepend(el);
     if (log.children.length > 10) log.removeChild(log.lastChild);
+  }
+
+  // ── localStorage face persistence ───────────────────────────────────────────
+
+  function _saveFaces() {
+    try {
+      localStorage.setItem('saras_saved_faces', JSON.stringify(_savedFaces));
+      console.log('[FACE] Saved', Object.keys(_savedFaces).length, 'face(s) to localStorage');
+    } catch(e) { console.warn('[FACE] localStorage save failed:', e); }
+  }
+
+  function _loadFaces() {
+    try {
+      const raw = localStorage.getItem('saras_saved_faces');
+      if (raw) {
+        _savedFaces = JSON.parse(raw);
+        console.log('[FACE] Loaded', Object.keys(_savedFaces).length, 'face(s) from localStorage:', Object.keys(_savedFaces));
+      }
+    } catch(e) { console.warn('[FACE] localStorage load failed:', e); }
   }
 
   // ── Model loading ───────────────────────────────────────────────────────────
@@ -221,17 +240,42 @@
     });
   }
 
+  // Minimum face width (px at 640 wide) that means robot is "close enough"
+  // If face is smaller → robot moves forward
+  const FACE_CLOSE_WIDTH = 140;
+
   function _sendTrackCmd(box) {
     const vw   = (_video && _video.videoWidth) ? _video.videoWidth : 640;
     const cx   = box.x + box.width / 2;
     const dead = vw * DEAD_ZONE;
     const mid  = vw / 2;
 
-    const cmd = cx < mid - dead ? 'J' : cx > mid + dead ? 'K' : 'C';
-    if (cmd !== _lastCmd) {
-      _lastCmd = cmd;
-      if (window.ArduinoSerial) window.ArduinoSerial.sendCmd(cmd);
-      if (_onTrackCmd) _onTrackCmd(cmd, box);
+    // ── Servo pan command ──────────────────────────────────────────────────
+    const servoCmd = cx < mid - dead ? 'J' : cx > mid + dead ? 'K' : 'C';
+    if (servoCmd !== _lastCmd) {
+      _lastCmd = servoCmd;
+      if (window.ArduinoSerial) window.ArduinoSerial.sendCmd(servoCmd);
+      if (_onTrackCmd) _onTrackCmd(servoCmd, box);
+    }
+
+    // ── Robot body movement (only during smart track, not follow) ──────────
+    // Turn to face the person, then move forward when centered
+    if (_smartActive && window.sendCommand) {
+      let bodyCmd;
+      if (cx < mid - dead) {
+        bodyCmd = 'L';   // face is left  → turn left
+      } else if (cx > mid + dead) {
+        bodyCmd = 'R';   // face is right → turn right
+      } else if (box.width < FACE_CLOSE_WIDTH) {
+        bodyCmd = 'F';   // centered but far → move forward
+      } else {
+        bodyCmd = 'S';   // centered and close → stop
+      }
+      // Only emit body command when it changes (avoid flooding)
+      if (bodyCmd !== window._lastTrackBodyCmd) {
+        window._lastTrackBodyCmd = bodyCmd;
+        window.sendCommand(bodyCmd, 'SmartTrack');
+      }
     }
   }
 
@@ -344,6 +388,9 @@
       }
     }, 2000);
 
+    // Persist to localStorage so faces survive page refresh
+    _saveFaces();
+
     console.log(`[FACE] Registered '${name}', descriptor length: ${descriptor.length}`);
     return true;
   }
@@ -414,7 +461,7 @@
     start, stop, takeSnapshot,
     startFollow, stopFollow,
     startSmartTrack, stopSmartTrack,
-    registerFace, getSavedFaces, loadFace, hasTarget,
+    registerFace, getSavedFaces, loadFace, deleteFace, clearAllFaces, hasTarget,
     onFaceDetected, onFaceLost, onTrackCmd,
     isModelsLoaded,
   };
@@ -423,10 +470,32 @@
   function loadFace(name) {
     if (!_savedFaces[name]) return false;
     _registeredDescriptor = new Float32Array(_savedFaces[name]);
-    _registeredName = name;
+    _registeredName       = name;
+    console.log(`[FACE] Loaded '${name}' as tracking target`);
     return true;
   }
+
+  function deleteFace(name) {
+    if (!_savedFaces[name]) return false;
+    delete _savedFaces[name];
+    _saveFaces();
+    if (_registeredName === name) {
+      _registeredDescriptor = null;
+      _registeredName = '';
+    }
+    return true;
+  }
+
+  function clearAllFaces() {
+    _savedFaces = {};
+    _registeredDescriptor = null;
+    _registeredName = '';
+    try { localStorage.removeItem('saras_saved_faces'); } catch(e) {}
+  }
   function hasTarget() { return _registeredDescriptor !== null; }
+
+  // Load saved faces from localStorage on startup
+  _loadFaces();
 
   // Auto-start model loading on page load (background, cached after first run)
   window.addEventListener('load', () => setTimeout(loadModels, 1500));

@@ -204,21 +204,52 @@ function updateConnectionStatus(online) {
 // SEND COMMAND — Web Serial + SocketIO log
 // ══════════════════════════════════════════════════════════════════════════════
 
+const _CMD_LABELS_UI = {
+  'F':('FORWARD','Moving Forward'),  'W':('FORWARD','Moving Forward'),
+  'B':('BACKWARD','Moving Backward'),'S':('STOPPED','Stopped'),
+  'X':('STOPPED','Stopped'),         'L':('LEFT','Turning Left'),
+  'A':('LEFT','Turning Left'),       'R':('RIGHT','Turning Right'),
+  'D':('RIGHT','Turning Right'),
+};
+
 function sendCommand(cmd, source = 'Manual') {
   if (_smartTrackActive && ['Keyboard','Manual','Voice','Gamepad'].includes(source)) {
     pauseSmartTrack(cmd, source);
     return;
   }
 
-  // ── 1. Send to Arduino via Web Serial (if connected) ─────────────────────
-  if (window.ArduinoSerial) {
-    window.ArduinoSerial.sendCmd(cmd);
+  // 1. Send to Arduino via Web Serial
+  if (window.ArduinoSerial) window.ArduinoSerial.sendCmd(cmd);
+
+  // 2. Log locally IMMEDIATELY (don't wait for SocketIO round-trip)
+  const info = _CMD_LABELS_UI[cmd.toUpperCase()];
+  if (info) {
+    appendLogEntry({
+      time:    new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),
+      command: cmd,
+      label:   info[1],
+      source:  source,
+      success: true,
+    });
+    // Update status strip
+    const robotDir = document.getElementById('robotDirection');
+    const lastCmd  = document.getElementById('lastCommand');
+    const robotSt  = document.getElementById('robotStatus');
+    const hfDir    = document.getElementById('hfDir');
+    if (robotDir) robotDir.textContent = info[0];
+    if (lastCmd)  lastCmd.textContent  = cmd;
+    if (robotSt)  robotSt.textContent  = cmd === 'S' || cmd === 'X' ? 'IDLE' : 'MOVING';
+    if (hfDir)    hfDir.textContent    = info[0];
   }
 
-  // ── 2. Log to server via SocketIO (for command log + state sync) ──────────
-  socket.emit('browser_command', { cmd, source });
+  // 3. Also notify server (for multi-screen sync) — fire and forget
+  fetch('/api/command', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cmd, source}),
+  }).catch(() => {});
 
-  // ── 3. Animate UI ─────────────────────────────────────────────────────────
+  // 4. Animate UI
   animateMovement(cmd);
 }
 
@@ -1045,10 +1076,13 @@ document.getElementById('btnSmartTrack')?.addEventListener('click', async () => 
     startRadarSweep();
   } else {
     window.BrowserCamera?.stopSmartTrack();
+    // Stop robot body movement when tracking stops
+    if (window.ArduinoSerial) window.ArduinoSerial.sendCmd('S');
+    window._lastTrackBodyCmd = null;
     if (badge) { badge.textContent = 'STANDBY'; badge.className = 'panel-badge'; }
     if (btn)   btn.innerHTML = '<span class="btn-icon">🎯</span> START TRACKING';
     socket.emit('face_status_update', { active: false });
-    trackLog('⏹ Tracking stopped.', 'scanning');
+    trackLog('⏹ Tracking stopped. Robot stopped.', 'scanning');
     stopRadarSweep();
   }
 });
@@ -1070,7 +1104,8 @@ function refreshSavedFacesList() {
     item.className = 'sf-item';
     item.innerHTML = `
       <span class="sf-name">👤 ${escapeHtml(name)}</span>
-      <button class="btn btn-sm btn-ghost sf-load-btn" data-name="${escapeHtml(name)}">LOAD</button>`;
+      <button class="btn btn-sm btn-ghost sf-load-btn" data-name="${escapeHtml(name)}">LOAD</button>
+      <button class="btn btn-sm btn-ghost sf-del-btn" data-name="${escapeHtml(name)}" style="color:#ff6666;margin-left:4px">✕</button>`;
     list.appendChild(item);
   });
 
@@ -1082,6 +1117,18 @@ function refreshSavedFacesList() {
         document.getElementById('targetStatus').textContent = `${faceName} ✓`;
         document.getElementById('btnSmartTrack').disabled = false;
         trackLog(`✓ Loaded '${faceName}' as target.`, 'found');
+        speakOnPhone(`${faceName} loaded as tracking target`);
+      }
+    });
+  });
+
+  list.querySelectorAll('.sf-del-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const faceName = btn.dataset.name;
+      if (confirm(`Delete face '${faceName}'?`)) {
+        window.BrowserCamera.deleteFace?.(faceName);
+        refreshSavedFacesList();
+        trackLog(`🗑 Deleted '${faceName}'`, 'scanning');
       }
     });
   });
@@ -1165,8 +1212,16 @@ document.addEventListener('DOMContentLoaded', () => {
     .then(data => (data.log || []).forEach(e => appendLogEntry(e)))
     .catch(() => {});
 
-  // Initial saved faces list
-  setTimeout(refreshSavedFacesList, 500);
+  // Load saved faces from localStorage and show in panel
+  // BrowserCamera loads them in _loadFaces() at init — just refresh the UI list
+  setTimeout(() => {
+    refreshSavedFacesList();
+    // If faces exist, show count in trackLog
+    const faces = window.BrowserCamera?.getSavedFaces?.() || [];
+    if (faces.length > 0) {
+      trackLog(`📁 ${faces.length} saved face(s) restored: ${faces.join(', ')}`, 'found');
+    }
+  }, 800);
 });
 
 
