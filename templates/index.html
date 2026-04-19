@@ -31,6 +31,9 @@
 /* ── Browser-mode notice ────────────────────────────────── */
 .browser-mode-note{font-size:10px;color:rgba(255,255,255,0.3);
   font-family:'JetBrains Mono',monospace;margin-top:4px;letter-spacing:.05em;}
+/* ── Topbar Arduino ─────────────────────────────────────── */
+.tb-arduino{display:flex;align-items:center;gap:8px;margin-right:4px;}
+@media(max-width:768px){.tb-arduino{display:none;}}
 </style>
 </head>
 <body>
@@ -55,6 +58,11 @@
     <span class="tb-pill" id="connectionStatus"><span class="tb-dot"></span>OFFLINE</span>
     <span class="tb-pill"><span class="tb-label">BAT</span><span id="batteryLevel">--</span>%</span>
     <span class="tb-pill"><span class="tb-label">UP</span><span id="uptimeDisplay">00:00:00</span></span>
+  </div>
+  <div class="tb-arduino">
+    <button class="tb-ctrl-btn" id="btnArduinoConnect" style="background:rgba(0,255,136,0.1);border-color:rgba(0,255,136,0.3);">🔌 CONNECT ARDUINO</button>
+    <span class="arduino-badge" id="arduinoStatusBadge" style="font-size:10px;padding:2px 6px;">● DEMO</span>
+    <span class="dist-display" id="distDisplay" style="font-size:10px;font-family:monospace;color:#a0f0c0;"></span>
   </div>
   <button class="tb-ctrl-btn" onclick="document.getElementById('ctrl').scrollIntoView({behavior:'smooth'})">
     Control Panel ↓
@@ -243,6 +251,7 @@
   <div class="ss-item" id="obstacleCard"><span class="ss-l">OBSTACLE</span><span class="ss-v" id="obstacleStatus">CLEAR</span></div>
   <div class="ss-item"><span class="ss-l">FACE TRACK</span><span class="ss-v" id="faceStatus">OFF</span></div>
   <div class="ss-item"><span class="ss-l">ARDUINO</span><span class="ss-v" id="arduinoMode">DEMO</span></div>
+  <div class="ss-item" style="flex:2;"><span class="ss-l">SERIAL</span><span class="ss-v" id="mockCmdLog" style="font-size:10px;opacity:0.6;">[DEMO]</span></div>
 </div>
 
 
@@ -413,110 +422,7 @@
       </div>
     </section>
 
-    <!-- ROW 3: Face(1) | Obstacle(2) | Camera(3) -->
-
-    <!-- FACE TRACKING -->
-    <section class="panel face-panel">
-      <div class="panel-header">
-        <h2 class="panel-title"><span class="panel-icon">◉</span> FACE TRACKING</h2>
-        <span class="panel-badge" id="faceBadge">STANDBY</span>
-      </div>
-      <div class="panel-body">
-        <div class="radar-container" id="radarContainer">
-          <div class="radar-ring r1"></div>
-          <div class="radar-ring r2"></div>
-          <div class="radar-ring r3"></div>
-          <div class="radar-sweep" id="radarSweep"></div>
-          <div class="radar-crosshair"></div>
-          <div class="face-box" id="faceDetectionBox"><span class="face-box-label">TARGET</span></div>
-          <div class="radar-dot" id="radarDot"></div>
-        </div>
-        <div class="face-controls">
-          <button class="btn btn-primary" id="btnFaceDetect">
-            <span class="btn-icon">◉</span> FOLLOW PERSON
-          </button>
-          <div class="face-stats"><span class="fs-label">OFFSET</span><span id="faceOffset">—</span> px</div>
-        </div>
-        <p class="browser-mode-note">▸ Uses device camera + face-api.js neural net in browser</p>
-      </div>
-    </section>
-
-    <!-- OBSTACLE SENSOR -->
-    <section class="panel obstacle-panel" id="obstaclePanel">
-      <div class="panel-header">
-        <h2 class="panel-title"><span class="panel-icon">⚠</span> OBSTACLE SENSOR</h2>
-        <span class="panel-badge" id="obstacleBadge">CLEAR</span>
-      </div>
-      <div class="panel-body obstacle-body">
-        <div class="obstacle-visual" id="obstacleVisual">
-          <div class="obstacle-icon" id="obstacleIcon">
-            <div class="obs-triangle">⚠</div>
-            <div class="obs-ring ob1"></div>
-            <div class="obs-ring ob2"></div>
-          </div>
-          <div class="sensor-bars">
-            <div class="sensor-bar" id="sbar1"></div>
-            <div class="sensor-bar" id="sbar2"></div>
-            <div class="sensor-bar" id="sbar3"></div>
-            <div class="sensor-bar" id="sbar4"></div>
-            <div class="sensor-bar" id="sbar5"></div>
-          </div>
-        </div>
-        <p class="obstacle-status-text" id="obstacleStatusText">PATH CLEAR — NO OBSTACLES DETECTED</p>
-        <button class="btn btn-outline btn-sm" id="btnSimObstacle">⚡ SIMULATE OBSTACLE</button>
-      </div>
-    </section>
-
-    <!-- LIVE CAMERA -->
-    <section class="panel camera-panel">
-      <div class="panel-header">
-        <h2 class="panel-title"><span class="panel-icon">📷</span> LIVE CAMERA</h2>
-        <span class="panel-badge" id="cameraBadge">OFF</span>
-      </div>
-      <div class="panel-body">
-
-        <!-- Arduino Web Serial connect panel -->
-        <div class="arduino-panel">
-          <button class="btn btn-outline btn-sm" id="btnArduinoConnect">🔌 CONNECT ARDUINO</button>
-          <span class="arduino-badge" id="arduinoStatusBadge">● DEMO</span>
-          <span class="mock-log" id="mockCmdLog">[DEMO] No Arduino connected</span>
-          <span class="dist-display" id="distDisplay"></span>
-        </div>
-
-        <!-- Camera feed — browser getUserMedia (NOT server MJPEG) -->
-        <div class="camera-container" id="cameraContainer" style="position:relative;">
-          <div class="camera-offline" id="cameraOffline">
-            <div class="cam-offline-icon">📷</div>
-            <p>Camera OFF</p>
-            <small>Click "Toggle Camera" or start face tracking</small>
-          </div>
-          <!-- video element for browser camera (replaces old MJPEG img) -->
-          <video id="cameraFeed" class="camera-feed" autoplay muted playsinline
-            style="display:none;opacity:0;transition:opacity 0.5s;"></video>
-          <!-- canvas overlay for face detection boxes -->
-          <canvas id="camCanvas" class="cam-canvas-overlay"
-            style="display:none;"></canvas>
-          <div class="camera-hud" id="cameraHud" style="display:none;">
-            <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
-            <div class="hud-corner bl"></div><div class="hud-corner br"></div>
-            <div class="hud-crosshair"></div>
-            <div class="hud-label" id="hudLabel">SARAS CAM</div>
-            <div class="hud-face-count" id="hudFaceCount"></div>
-          </div>
-        </div>
-
-        <!-- Camera buttons -->
-        <div class="camera-btn-row">
-          <button class="btn btn-outline" id="btnCameraToggle">📷 TOGGLE CAMERA</button>
-          <button class="btn btn-outline btn-sm" id="btnSnapshot" disabled>
-            <span class="btn-icon">📸</span> SNAPSHOT
-          </button>
-        </div>
-        <p class="browser-mode-note">▸ Camera runs in browser · Arduino: Chrome/Edge only (Web Serial)</p>
-      </div>
-    </section>
-
-    <!-- ROW 4: SmartTrack(1-2) | Command Log(3) -->
+    <!-- ROW 3: SmartTrack(1-2) | Camera(3) -->
 
     <!-- SMART TRACKING -->
     <section class="panel smart-track-panel">
@@ -569,6 +475,101 @@
           <p>③ Click <b>START TRACKING</b> → SARAS follows only that person</p>
           <p class="browser-mode-note">▸ Face recognition runs entirely in browser — no data sent to server</p>
         </div>
+      </div>
+    </section>
+
+    <!-- LIVE CAMERA -->
+    <section class="panel camera-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">📷</span> LIVE CAMERA</h2>
+        <span class="panel-badge" id="cameraBadge">OFF</span>
+      </div>
+      <div class="panel-body">
+
+        <!-- Camera feed — browser getUserMedia (NOT server MJPEG) -->
+        <div class="camera-container" id="cameraContainer" style="position:relative;">
+          <div class="camera-offline" id="cameraOffline">
+            <div class="cam-offline-icon">📷</div>
+            <p>Camera OFF</p>
+            <small>Click "Toggle Camera" or start face tracking</small>
+          </div>
+          <!-- video element for browser camera (replaces old MJPEG img) -->
+          <video id="cameraFeed" class="camera-feed" autoplay muted playsinline
+            style="display:none;opacity:0;transition:opacity 0.5s;"></video>
+          <!-- canvas overlay for face detection boxes -->
+          <canvas id="camCanvas" class="cam-canvas-overlay"
+            style="display:none;"></canvas>
+          <div class="camera-hud" id="cameraHud" style="display:none;">
+            <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
+            <div class="hud-corner bl"></div><div class="hud-corner br"></div>
+            <div class="hud-crosshair"></div>
+            <div class="hud-label" id="hudLabel">SARAS CAM</div>
+            <div class="hud-face-count" id="hudFaceCount"></div>
+          </div>
+        </div>
+
+        <!-- Camera buttons -->
+        <div class="camera-btn-row">
+          <button class="btn btn-outline" id="btnCameraToggle">📷 TOGGLE CAMERA</button>
+          <button class="btn btn-outline btn-sm" id="btnSnapshot" disabled>
+            <span class="btn-icon">📸</span> SNAPSHOT
+          </button>
+        </div>
+        <p class="browser-mode-note">▸ Camera runs in browser · Arduino: Chrome/Edge only (Web Serial)</p>
+      </div>
+    </section>
+
+    <!-- ROW 4: Follow(1) | Obstacle(2) | Command Log(3) -->
+
+    <!-- FACE TRACKING -->
+    <section class="panel face-panel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">◉</span> FACE TRACKING</h2>
+        <span class="panel-badge" id="faceBadge">STANDBY</span>
+      </div>
+      <div class="panel-body">
+        <div class="radar-container" id="radarContainer">
+          <div class="radar-ring r1"></div>
+          <div class="radar-ring r2"></div>
+          <div class="radar-ring r3"></div>
+          <div class="radar-sweep" id="radarSweep"></div>
+          <div class="radar-crosshair"></div>
+          <div class="face-box" id="faceDetectionBox"><span class="face-box-label">TARGET</span></div>
+          <div class="radar-dot" id="radarDot"></div>
+        </div>
+        <div class="face-controls">
+          <button class="btn btn-primary" id="btnFaceDetect">
+            <span class="btn-icon">◉</span> FOLLOW PERSON
+          </button>
+          <div class="face-stats"><span class="fs-label">OFFSET</span><span id="faceOffset">—</span> px</div>
+        </div>
+        <p class="browser-mode-note">▸ Uses device camera + face-api.js neural net in browser</p>
+      </div>
+    </section>
+
+    <!-- OBSTACLE SENSOR -->
+    <section class="panel obstacle-panel" id="obstaclePanel">
+      <div class="panel-header">
+        <h2 class="panel-title"><span class="panel-icon">⚠</span> OBSTACLE SENSOR</h2>
+        <span class="panel-badge" id="obstacleBadge">CLEAR</span>
+      </div>
+      <div class="panel-body obstacle-body">
+        <div class="obstacle-visual" id="obstacleVisual">
+          <div class="obstacle-icon" id="obstacleIcon">
+            <div class="obs-triangle">⚠</div>
+            <div class="obs-ring ob1"></div>
+            <div class="obs-ring ob2"></div>
+          </div>
+          <div class="sensor-bars">
+            <div class="sensor-bar" id="sbar1"></div>
+            <div class="sensor-bar" id="sbar2"></div>
+            <div class="sensor-bar" id="sbar3"></div>
+            <div class="sensor-bar" id="sbar4"></div>
+            <div class="sensor-bar" id="sbar5"></div>
+          </div>
+        </div>
+        <p class="obstacle-status-text" id="obstacleStatusText">PATH CLEAR — NO OBSTACLES DETECTED</p>
+        <button class="btn btn-outline btn-sm" id="btnSimObstacle">⚡ SIMULATE OBSTACLE</button>
       </div>
     </section>
 
