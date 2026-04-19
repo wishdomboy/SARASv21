@@ -1213,15 +1213,24 @@ document.addEventListener('DOMContentLoaded', () => {
     .catch(() => {});
 
   // Load saved faces from localStorage and show in panel
-  // BrowserCamera loads them in _loadFaces() at init — just refresh the UI list
   setTimeout(() => {
     refreshSavedFacesList();
-    // If faces exist, show count in trackLog
     const faces = window.BrowserCamera?.getSavedFaces?.() || [];
     if (faces.length > 0) {
       trackLog(`📁 ${faces.length} saved face(s) restored: ${faces.join(', ')}`, 'found');
     }
   }, 800);
+
+  // Show model loading status — models start loading immediately on page open
+  trackLog('⏳ Face models loading in background (first load: ~30-60s)...', 'scanning');
+  // Poll until models are ready, then show confirmation
+  (function checkModels() {
+    if (window.BrowserCamera?.isModelsLoaded?.()) {
+      trackLog('✅ Face models ready — you can now register faces', 'found');
+    } else {
+      setTimeout(checkModels, 2000);
+    }
+  })();
 });
 
 

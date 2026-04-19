@@ -129,7 +129,7 @@
   }
 
   async function waitForModels(timeoutMs) {
-    timeoutMs = timeoutMs || 30000;
+    timeoutMs = timeoutMs || 90000;
     if (_modelsLoaded) return true;
 
     // If previous attempt failed, reset and retry
@@ -143,8 +143,15 @@
     if (!_modelsLoading) loadModels();
 
     const deadline = Date.now() + timeoutMs;
+    let dotCount = 0;
     while (!_modelsLoaded && !_modelsError) {
       if (Date.now() > deadline) return false;
+      // Update badge every 3s so user knows it is working
+      dotCount++;
+      if (dotCount % 6 === 0) {
+        const elapsed = Math.round((Date.now() - (deadline - timeoutMs)) / 1000);
+        _setBadge(`⏳ ${elapsed}s`, 'warning');
+      }
       await new Promise(r => setTimeout(r, 500));
     }
     return _modelsLoaded;
@@ -338,20 +345,22 @@
 
     // 1. Wait for models
     if (!_modelsLoaded) {
-      _trackLog('⏳ Face models loading... please wait (5–20s on first use)', 'scanning');
+      _trackLog('⏳ Face models loading... please wait (may take 20-60s on first use)', 'scanning');
+      _setBadge('⏳ LOADING', 'warning');
       let t = 0;
       const ticker = setInterval(() => {
         t++;
-        _trackLog(`⏳ Loading models — ${t}s elapsed...`, 'scanning');
+        _trackLog(`⏳ Loading models — ${t}s... (large files, please wait)`, 'scanning');
       }, 1000);
-      const ready = await waitForModels(30000);
+      const ready = await waitForModels(90000);   // 90 second timeout for slow connections
       clearInterval(ticker);
 
       if (!ready) {
-        _trackLog('⚠ Models timed out. Refresh the page and try again.', 'bypass');
+        _trackLog('⚠ Models timed out after 90s. Check internet speed and try again.', 'bypass');
+        _setBadge('MODEL ERR', 'danger');
         return false;
       }
-      _trackLog('✅ Models ready!', 'found');
+      _trackLog('✅ Models loaded! Detecting face now...', 'found');
     }
 
     // 2. Verify camera
@@ -506,9 +515,15 @@
   // Load saved faces from localStorage on startup
   _loadFaces();
 
-  // Auto-start model loading on page load (background, cached after first run)
-  window.addEventListener('load', () => setTimeout(loadModels, 1500));
+  // Start loading models as early as possible — DOMContentLoaded fires before images/scripts finish
+  // This gives models maximum time to load before user needs them
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadModels);
+  } else {
+    // Already loaded (script is deferred)
+    loadModels();
+  }
 
-  console.log('[BrowserCamera] Module loaded. Models load in background.');
+  console.log('[BrowserCamera] Module loaded. Models loading immediately.');
 
 })();
