@@ -86,6 +86,19 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    """Quick health check — open this URL to diagnose deployment issues."""
+    import sys
+    return jsonify({
+        'status':            'ok',
+        'chatbot_available': CHATBOT_AVAILABLE,
+        'sarvam_key_set':    bool(os.environ.get('SARVAM_API_KEY')),
+        'secret_key_set':    bool(os.environ.get('SECRET_KEY')),
+        'python_version':    sys.version,
+    })
+
+
 @app.route('/api/state', methods=['GET'])
 def api_state():
     return jsonify(robot_state)
@@ -141,13 +154,16 @@ def api_chat():
         try:
             chatbot  = get_chatbot()
             response = chatbot.chat(message)
-            # Broadcast to all connected clients
-            socketio.emit('chat_message', {'role': 'assistant', 'text': response, 'speak': True})
+            # Broadcast to OTHER connected screens (multi-tab sync)
+            # NOTE: The requesting client reads the reply from this JSON directly —
+            # not from the socket event — so there is no race condition.
+            socketio.emit('chat_message', {'role': 'assistant', 'text': response, 'speak': False})
             return jsonify({'response': response, 'intent': intent_data, 'success': True})
         except Exception as e:
-            return jsonify({'response': f'Chatbot error: {e}', 'intent': intent_data, 'success': False})
+            print(f"[CHAT ERROR] {e}")
+            return jsonify({'response': f'Chatbot error: {str(e)}', 'intent': intent_data, 'success': False})
 
-    return jsonify({'response': 'Chatbot offline. Check SARVAM_API_KEY in .env', 'intent': intent_data, 'success': False})
+    return jsonify({'response': 'Chatbot offline. Check SARVAM_API_KEY in Render environment variables.', 'intent': intent_data, 'success': False})
 
 
 @app.route('/api/chat/clear', methods=['POST'])

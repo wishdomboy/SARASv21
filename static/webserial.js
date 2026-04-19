@@ -43,7 +43,7 @@
     'X': 'X',   // stop (alias)
     'J': 'J',   // servo pan left
     'C': 'C',   // servo center
-    'K': 'K',   // servo pan right
+    'K': 'L',   // servo pan right → Arduino 'L' char
     // Pass-through for direct Arduino chars
     'W': 'W', 'A': 'A', 'D': 'D',
   };

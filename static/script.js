@@ -556,17 +556,25 @@ async function sendToChat(text, source = 'text') {
     });
     const data = await res.json();
     removeTypingIndicator(typingEl);
-    if (!data.success) {
-      appendChatMessage('assistant', data.response || 'Sorry, could not respond.');
-    }
-    // If intent from chat api contains command, execute it
+
+    // Always show reply directly from REST response.
+    // DO NOT wait for SocketIO 'chat_message' — unreliable on cloud Render.
+    // The socketio.emit in app.py is only to sync OTHER open tabs/screens.
+    const reply = data.response || 'Sorry, I could not respond.';
+    appendChatMessage('assistant', reply);
+
+    // Speak if voice-triggered
+    if (source === 'voice') speakOnPhone(reply);
+
+    // If server detected a robot command inside the chat, execute it
     if (data.intent && data.intent.type === 'command') {
       sendCommand(data.intent.command, 'Chat');
       animateMovement(data.intent.command);
     }
-  } catch {
+  } catch (err) {
     removeTypingIndicator(typingEl);
-    appendChatMessage('assistant', 'Chatbot offline. Check server connection.');
+    appendChatMessage('assistant', 'Chatbot offline. Check SARVAM_API_KEY in Render environment variables.');
+    console.error('[CHAT]', err);
   }
 }
 
@@ -714,11 +722,14 @@ document.getElementById('btnChatClear')?.addEventListener('click', async () => {
   try { await fetch('/api/chat/clear', { method: 'POST' }); } catch {}
 });
 
+// chat_message is for MULTI-SCREEN SYNC only (other open tabs/windows).
+// The sender's own chat is handled directly in sendToChat() via REST response.
+// We skip appending here because the sender already appended it.
+// Only truly useful when a second screen/tab is open.
 socket.on('chat_message', ({ role, text, speak }) => {
-  if (role === 'assistant') {
-    appendChatMessage(role, text);
-    if (speak) speakOnPhone(text);
-  }
+  // intentionally left empty — handled in sendToChat() REST response
+  // un-comment below if you want multi-screen chat sync:
+  // if (role === 'assistant') { appendChatMessage(role, text); if (speak) speakOnPhone(text); }
 });
 
 function showWelcomeMessage() {
