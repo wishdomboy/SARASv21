@@ -124,19 +124,28 @@
       _modelsError   = true;
       console.error('[FACE] Model load error:', err);
       _setBadge('MODEL ERR', 'danger');
+      _trackLog('⚠ Models failed. Click REGISTER TARGET to retry automatically.', 'bypass');
     }
   }
 
   async function waitForModels(timeoutMs) {
-    timeoutMs = timeoutMs || 25000;
+    timeoutMs = timeoutMs || 30000;
     if (_modelsLoaded) return true;
-    if (_modelsError)  return false;
+
+    // If previous attempt failed, reset and retry
+    if (_modelsError) {
+      console.log('[FACE] Previous load failed — retrying...');
+      _modelsError   = false;
+      _modelsLoading = false;
+    }
+
+    // Start loading if not already in progress
     if (!_modelsLoading) loadModels();
 
     const deadline = Date.now() + timeoutMs;
     while (!_modelsLoaded && !_modelsError) {
       if (Date.now() > deadline) return false;
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 500));
     }
     return _modelsLoaded;
   }
@@ -204,7 +213,7 @@
           scoreThreshold: 0.4,
           inputSize: 320,
         }))
-        .withFaceLandmarks(true)
+        .withFaceLandmarks()
         .withFaceDescriptors();
     } catch (e) {
       return [];
