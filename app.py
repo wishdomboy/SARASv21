@@ -36,8 +36,9 @@ except Exception as e:
 # ── Flask + SocketIO ──────────────────────────────────────────────────────────
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'saras-default-secret-change-me')
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
-
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading',
+                    ping_timeout=60, ping_interval=25,
+                    logger=False, engineio_logger=False)
 # ── Global State ──────────────────────────────────────────────────────────────
 robot_state = {
     "status":          "IDLE",
