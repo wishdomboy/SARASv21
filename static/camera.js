@@ -23,7 +23,7 @@
 
 (function () {
 
-  const MODELS_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+  const MODELS_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
   const DEAD_ZONE  = 0.15;   // 15% center dead-zone — reduces servo jitter
 
   // ── State ───────────────────────────────────────────────────────────────────
