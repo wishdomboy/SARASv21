@@ -130,19 +130,31 @@ def _clean_reply(text: str) -> str:
     return text.strip()
 
 
+# Load Bot_prompt.txt once at module level
+_BOT_PROMPT_BASE = ""
+try:
+    _prompt_path = os.path.join(os.path.dirname(__file__), 'Bot_prompt.txt')
+    with open(_prompt_path, 'r', encoding='utf-8') as f:
+        _BOT_PROMPT_BASE = f.read().strip()
+    print(f"[SARAS] Bot_prompt.txt loaded ({len(_BOT_PROMPT_BASE)} chars)")
+except Exception as e:
+    print(f"[SARAS] Bot_prompt.txt not found, using default prompt: {e}")
+    _BOT_PROMPT_BASE = (
+        "You are SARAS — Saraswati AI Robot Autonomous System. "
+        "You are an intelligent robot inspired by Goddess Saraswati. "
+        "You are calm, wise, helpful, and concise. "
+        "Never say you are an AI language model — you ARE SARAS the robot. "
+        "Keep answers to 2-3 sentences unless more detail is needed."
+    )
+
+
 def _build_system_prompt(user_text: str) -> str:
     lang = _detect_language(user_text)
+    # Use Bot_prompt.txt as the base, append language instruction
     return (
-        "You are SARAS — AI Robot Autonomous System. "
-        "A physical robot inspired by Goddess Saraswati. Calm, wise, concise. "
-        "STRICT RULES: "
-        "Reply in EXACTLY the same language as the user. No exceptions. "
-        "Hindi (Devanagari) → Hindi only. "
-        "Hinglish (Roman Hindi) → Hinglish only. "
-        "English → English only. "
-        "MAXIMUM 2 short sentences. No bullet points. No markdown. "
-        "Never say you are an AI — you ARE SARAS the robot. "
-        f"Detected language: {lang}. REPLY IN {lang.upper()} ONLY."
+        _BOT_PROMPT_BASE + "\n\n"
+        f"Detected language: {lang}. REPLY IN {lang.upper()} ONLY. "
+        "No bullet points. No markdown."
     )
 
 
